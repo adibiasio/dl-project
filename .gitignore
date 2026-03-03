@@ -1,3 +1,7 @@
 .venv
 .python-version
 uv.lock
+data
+data_preprocessed_blip2
+slurm-*.out
+*.zip
