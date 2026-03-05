@@ -1,8 +1,7 @@
-#!/bin/bash
-#SBATCH --job-name=dl-project-setup
-#SBATCH -t 00:30:00              		# Runtime in D-HH:MM
-#SBATCH -n 12                          # number of CPU cores
-#SBATCH -N 1
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+export UV_CACHE_DIR="$PWD/uv-cache"
+mkdir -p "$UV_CACHE_DIR"
 
 uv venv
 source .venv/bin/activate
