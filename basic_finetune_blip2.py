@@ -4,7 +4,6 @@ from torch.utils.data import DataLoader
 from transformers import Blip2ForConditionalGeneration, Blip2Processor
 
 DATAPATH = "./data_preprocessed_blip2"
-BATCH_SIZE = 16 
 NUM_EPOCHS = 5
 LEARNING_RATE = 1e-5
 BATCH_SIZE = 32
@@ -33,13 +32,13 @@ optimizer = torch.optim.AdamW(trainable_parameters,
 
 model.train()
 for epoch in range(NUM_EPOCHS):
-    optimizer.zero_grad()
     for batch in train:
+        optimizer.zero_grad()
         forward = model(
             pixel_values= batch['pixel_values'].to("cuda"),
             input_ids = batch['input_ids'].to("cuda"),
             attention_mask = batch['attention_mask'].to('cuda'),
-            labels=batch['input_ids'].to('cuda')
+            labels=batch['labels'].to('cuda')
         )
 
         loss = forward.loss
