@@ -2,7 +2,10 @@
 .python-version
 uv.lock
 data
+logs
+hf-cache
 data_preprocessed_blip2
+blip2-finetuned
 slurm-*.out
 *.zip
-setup.sh
+.env
