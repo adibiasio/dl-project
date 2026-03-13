@@ -3,11 +3,22 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from datasets import load_from_disk
 from transformers import Blip2ForConditionalGeneration, Blip2Processor
+from tqdm import tqdm
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from datetime import datetime
+import math
+import json
+import os
+
+from classifier_model_blip2 import VLMClassifier
 
 DATAPATH = "./data_preprocessed_blip2"
-BATCH_SIZE = 32
-NUM_EPOCHS = 5
-LR = 1e-4
+BATCH_SIZE = 16
+NUM_EPOCHS = 15
+LR = 5e-5
+WEIGHT_DECAY = 0.01
 device = "cuda"
 
 # -----------------------------
@@ -30,7 +41,8 @@ val_loader = DataLoader(
 
 # Load BLIP2 model
 vlm = Blip2ForConditionalGeneration.from_pretrained(
-    "Salesforce/blip2-opt-2.7b"
+    "Salesforce/blip2-opt-2.7b",
+    torch_dtype=torch.bfloat16
 ).to(device)
 processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b")
 
@@ -38,44 +50,43 @@ processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b")
 for param in vlm.parameters():
     param.requires_grad = False
 
+# Access OPT decoder layers
+decoder_layers = vlm.language_model.model.decoder.layers
+num_layers = len(decoder_layers)
 
-# Classifier Model
-class VLMClassifier(nn.Module):
+# Number of layers to unfreeze (5%)
+n_unfreeze = max(1, math.ceil(0.05 * num_layers))
 
-    def __init__(self, vlm_model):
-        super().__init__()
-
-        self.vlm = vlm_model
-        hidden_size = vlm_model.language_model.config.hidden_size
-        self.classifier = nn.Sequential(
-            nn.Linear(hidden_size, 512),
-            nn.ReLU(),
-            nn.Linear(512, 1)
-        )
-
-    def forward(self, pixel_values, input_ids, attention_mask):
-
-        outputs = self.vlm(
-            pixel_values=pixel_values,
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            output_hidden_states=True,
-            return_dict=True
-        )
-
-        hidden_states = outputs.language_model_outputs.hidden_states[-1]
-        last_token = hidden_states[:, -1, :]
-        logits = self.classifier(last_token).squeeze(-1)
-
-        return logits
-
+# Unfreeze last 5%
+for layer in decoder_layers[-n_unfreeze:]:
+    for p in layer.parameters():
+        p.requires_grad = True
 
 model = VLMClassifier(vlm).to(device)
-criterion = nn.BCEWithLogitsLoss()
+# Compute positive / negative label counts on the training set to handle class imbalance.
+# Labels are tokenized sequences; replace -100 with pad token id before decoding.
+pos_count = 0
+neg_count = 0
+for example in data["train"]:
+    labels_for_decode = example["labels"].clone()
+    labels_for_decode[labels_for_decode == -100] = processor.tokenizer.pad_token_id
+    decoded = processor.tokenizer.decode(labels_for_decode, skip_special_tokens=True)
+    if "yes" in decoded.lower():
+        pos_count += 1
+    else:
+        neg_count += 1
+
+criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(neg_count / pos_count).to(device))
 optimizer = torch.optim.AdamW(
     model.classifier.parameters(),
-    lr=LR
+    lr=LR,
+    weight_decay=WEIGHT_DECAY
 )
+
+# storage for validation metrics for plotting
+val_losses = []
+train_losses = []
+val_accs = []
 
 # Training
 for epoch in range(NUM_EPOCHS):
@@ -83,7 +94,7 @@ for epoch in range(NUM_EPOCHS):
     model.train()
     total_loss = 0
 
-    for batch in train_loader:
+    for batch in tqdm(train_loader, desc=f"Train Epoch {epoch}", leave=False):
 
         pixel_values = batch["pixel_values"].to(device)
         input_ids = batch["input_ids"].to(device)
@@ -109,6 +120,8 @@ for epoch in range(NUM_EPOCHS):
         total_loss += loss.item()
 
     print(f"Epoch {epoch} Train Loss: {total_loss / len(train_loader)}")
+    # store training loss per epoch
+    train_losses.append(total_loss / len(train_loader))
 
     # Validation
     model.eval()
@@ -119,7 +132,7 @@ for epoch in range(NUM_EPOCHS):
 
     with torch.no_grad():
 
-        for batch in val_loader:
+        for batch in tqdm(val_loader, desc=f"Val Epoch {epoch}", leave=False):
 
             pixel_values = batch["pixel_values"].to(device)
             input_ids = batch["input_ids"].to(device)
@@ -146,5 +159,56 @@ for epoch in range(NUM_EPOCHS):
     print(f"Epoch {epoch} Validation Loss: {val_loss / len(val_loader)}")
     print(f"Epoch {epoch} Validation Accuracy: {correct / total}")
 
+    # store metrics for plotting
+    val_losses.append(val_loss / len(val_loader))
+    val_accs.append(correct / total)
+
+# Generate outputs
+epochs = range(1, len(val_losses) + 1)
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+# Create an outputs directory and a blip2-specific subfolder for this timestamp
+output_root = "outputs"
+run_dir = os.path.join(output_root, f"blip2_{timestamp}")
+os.makedirs(run_dir, exist_ok=True)
+
+# Save numeric metrics to JSON so they are available separately from the plots
+metrics = {
+    "val_losses": val_losses,
+    "train_losses": train_losses,
+    "val_accs": val_accs,
+    "epochs": list(epochs),
+    "batch_size": BATCH_SIZE,
+    "num_epochs": NUM_EPOCHS,
+    "learning_rate": LR,
+    "weight_decay": WEIGHT_DECAY
+}
+metrics_filename = os.path.join(run_dir, f"finetune_metrics.json")
+with open(metrics_filename, "w") as mf:
+    json.dump(metrics, mf, indent=2)
+
+# Loss figure (train & validation)
+fig_loss = plt.figure(figsize=(6, 4))
+plt.plot(epochs, train_losses, marker='o', label='Train Loss')
+plt.plot(epochs, val_losses, marker='o', label='Val Loss')
+plt.title('Loss')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.legend()
+plt.tight_layout()
+loss_filename = os.path.join(run_dir, f"loss.png")
+plt.savefig(loss_filename)
+plt.close(fig_loss)
+
+# Validation accuracy figure
+fig_acc = plt.figure(figsize=(6, 4))
+plt.plot(epochs, val_accs, marker='o')
+plt.title('Validation Accuracy')
+plt.xlabel('Epoch')
+plt.ylabel('Accuracy')
+plt.tight_layout()
+acc_filename = os.path.join(run_dir, f"val_acc.png")
+plt.savefig(acc_filename)
+plt.close(fig_acc)
+
 # Save model
-torch.save(model.state_dict(), "vlm_hateful_classifier.pt")
+torch.save(model.state_dict(), os.path.join(run_dir, f"classifier.pt"))

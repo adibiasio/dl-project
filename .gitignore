@@ -1,6 +1,5 @@
 .venv
 .python-version
-uv.lock
 data
 logs
 hf-cache
@@ -10,3 +9,8 @@ slurm-*.out
 *.pt
 *.zip
 .env
+outputs
+*.out
+*.sbatch
+__pycache__
+tmp
