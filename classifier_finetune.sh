@@ -6,8 +6,8 @@
 #SBATCH --partition=ice-gpu
 #SBATCH --gres=gpu:1
 #SBATCH -C "H100"
-#SBATCH --output=logs/%x-basic-%j.out
-#SBATCH --error=logs/%x-basic-%j.err
+#SBATCH --output=logs/%x-classifier-%j.out
+#SBATCH --error=logs/%x-classifier-%j.err
 
 source .venv/bin/activate
 if [ -f .env ]; then
@@ -23,4 +23,4 @@ export TMPDIR=$BASE/tmp
 mkdir -p $HF_HOME
 mkdir -p $TMPDIR
 
-python basic_finetune_blip2.py
+python classifier_finetune_blip2.py
