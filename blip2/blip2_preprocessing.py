@@ -3,6 +3,8 @@ import os
 from PIL import Image 
 from transformers import Blip2Processor
 
+print("running")
+
 DATAPATH = "data"
 PREPROCESSED_PATH ="./data_preprocessed_blip2"
 BATCH_SIZE = 32
@@ -30,6 +32,7 @@ def preprocess_batch(batch):
     labels[labels == processor.tokenizer.pad_token_id] = -100 
     return {**inputs, "labels":labels}
 
+print("downloading hf processor")
 processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b")
 
 print("Loading dataset files")

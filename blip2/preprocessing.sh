@@ -15,7 +15,7 @@ if [ -f .env ]; then
     export $(grep -v '^#' .env | xargs)
 fi
 
-BASE=/storage/ice1/2/1/dkwon70/dl-project
+BASE=/storage/ice1/2/1/adibiasio3/dl-project
 export HF_HOME=$BASE/hf-cache
 export TRANSFORMERS_CACHE=$HF_HOME
 export HF_DATASETS_CACHE=$HF_HOME
